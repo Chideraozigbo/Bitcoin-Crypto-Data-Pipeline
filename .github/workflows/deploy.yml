@@ -1,0 +1,43 @@
+name: Deploy to Airflow
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main  
+
+jobs:
+  deploy:
+    if: github.event.pull_request.merged == true
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          echo "${{ secrets.KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.KNOWN_HOSTS }}
+
+      - name: Sync files to server
+        run: |
+          rsync -avz --exclude 'airflow.cfg' --exclude 'logs/' --exclude '.git/' ./ ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:$AIRFLOW_HOME/
+        env:
+          AIRFLOW_HOME: /home/ubuntu/airflow  
+
+      - name: Restart Airflow services
+        run: |
+          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
+          sudo systemctl restart airflow-webserver
+          sudo systemctl restart airflow-scheduler
+          EOF
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.KNOWN_HOSTS }}
