@@ -75,7 +75,7 @@ def transform(ti):
 
         df.rename(columns=columns_to_rename, inplace=True)
         
-        # Convert date columns to datetime format
+        # Convert date columns to datetime 
         columns_to_convert_datatypes = ['date_added', 'last_updated', 'quote_USD_last_updated']
         for col in columns_to_convert_datatypes:
             df[col] = pd.to_datetime(df[col], errors='coerce')
@@ -117,7 +117,7 @@ default_args = {
     'email_on_failure': True,
     'email_on_retry': True,
     'retries': 2,
-    'retry_delay': timedelta(seconds=20)
+    'retry_delay': timedelta(seconds=10)
 }
 
 crypto_dag = DAG(
