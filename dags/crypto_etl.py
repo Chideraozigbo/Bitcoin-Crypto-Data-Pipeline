@@ -1,6 +1,7 @@
 from airflow import DAG
 from datetime import datetime, timedelta
-from airflow.operators.python import PythonOperator
+from airflow.operators.python_operator import PythonOperator
+from airflow.utils.email import send_email_smtp
 import pandas as pd
 import json
 from requests import Request, Session
@@ -8,8 +9,17 @@ from requests.exceptions import ConnectionError, Timeout, TooManyRedirects
 from airflow.exceptions import AirflowException
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from io import StringIO
+from airflow.sensors.filesystem import FileSensor
+from airflow.providers.postgres.operators.postgres import PostgresOperator
+from airflow.operators.email import EmailOperator
 
 time_format = '%Y-%m-%d %H:%M:%S'
+
+
+header_file = '/home/ubuntu/airflow/dags/header.json'
+
+with open(header_file, 'r') as file:
+    header = json.load(file)
 
 def extract(ti):
     url = 'https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest'
@@ -17,10 +27,9 @@ def extract(ti):
         'slug': 'bitcoin',
         'convert': 'USD'
     }
-    headers = {
-        'Accepts': 'application/json',
-        'X-CMC_PRO_API_KEY': '9af647f6-55fa-4193-93db-6e69f1af611a',
-    }
+    
+    headers = header
+
     session = Session()
     session.headers.update(headers)
     try:
@@ -47,7 +56,7 @@ def transform(ti):
         df.columns = df.columns.str.replace('1.', '')
         
         # Drop unnecessary columns
-        columns_to_drop = ['tags', 'infinite_supply', 'platform', 'cmc_rank', 'is_fiat',
+        columns_to_drop = ['id','tags', 'infinite_supply', 'platform', 'cmc_rank', 'is_fiat',
                            'self_reported_circulating_supply', 'self_reported_market_cap',
                            'tvl_ratio', 'quote.USD.tvl']
         df = df.drop(columns=[col for col in columns_to_drop if col in df.columns], errors='ignore')
@@ -80,6 +89,9 @@ def transform(ti):
         for col in columns_to_convert_datatypes:
             df[col] = pd.to_datetime(df[col], errors='coerce')
         
+        filename = '/home/ubuntu/Crypto_Data.csv'
+        df.to_csv(filename, index=False)
+        
         ti.xcom_push(key='transformed_data', value=df.to_json())
         return df  
     
@@ -88,32 +100,29 @@ def transform(ti):
 
 def load(ti):
     try:
-        df_json = ti.xcom_pull(key='transformed_data', task_ids='transform_data_task')
-        if df_json is None:
-            raise ValueError("No data available from the transform task")
-        
-        df = pd.read_json(StringIO(df_json))
-
-        pg_hook = PostgresHook(postgres_conn_id='crypto_db_connection')
-        engine = pg_hook.get_sqlalchemy_engine()
-        
-        try:
-            # Attempt to load data into the PostgreSQL database
-            df.to_sql('cryptocurrencies', engine, if_exists='replace', index=False)
-            print("Data loaded successfully into the database")
-
-        except Exception as db_exception:
-            # Atempts to load the data into a csv
-            filename = f"airflow/Bitcoin-Crypto-ETL-Data-Pipeline/dags/Files/Crypto_data_as_at_{datetime.now().strftime(time_format)}.csv"
-            df.to_csv(filename, index=False)
-            print(f"Data loaded successfully into CSV file: {filename}")
-
+        hook = PostgresHook(postgres_conn_id='crypto_db_connection')
+        hook.copy_expert(
+            sql="""
+            COPY cryptocurrencies(name, symbol, slug, num_market_pairs, date_added, max_supply, 
+                                  circulating_supply, total_supply, is_active, last_updated, 
+                                  quote_usd_price, quote_usd_volume_24h, quote_usd_volume_change_24h, 
+                                  quote_usd_percent_change_1h, quote_usd_percent_change_24h, 
+                                  quote_usd_percent_change_7d, quote_usd_percent_change_30d, 
+                                  quote_usd_percent_change_60d, quote_usd_percent_change_90d, 
+                                  quote_usd_market_cap, quote_usd_market_cap_dominance, 
+                                  quote_usd_fully_diluted_market_cap, quote_usd_last_updated) 
+            FROM stdin WITH DELIMITER as ',' CSV HEADER
+            """,
+            filename='/home/ubuntu/Crypto_Data.csv'
+        )
+        print("Data loaded successfully into the database")
     except Exception as e:
         raise AirflowException(f"Error in load task: {e}")
 
+
 default_args = {
     'owner': 'Chidera',
-    'email': ['chideraozigbo@gmail.com', 'femi.eddy@gmail.com'],
+    'email': ['fegidorenaissanceclassof18@gmail.com'],
     'email_on_failure': True,
     'email_on_retry': True,
     'retries': 2,
@@ -140,10 +149,67 @@ transform_task = PythonOperator(
     dag=crypto_dag
 )
 
+file_sensor_task = FileSensor(
+    task_id='file_sensor',
+    filepath='/home/ubuntu/Crypto_Data.csv',
+    poke_interval=300,
+    timeout=600,
+    dag=crypto_dag
+)
+
+create_table_task = PostgresOperator(
+    task_id='create_table_task',
+    postgres_conn_id='crypto_db_connection',
+    sql="""
+    CREATE TABLE IF NOT EXISTS cryptocurrencies (
+        result_id SERIAL PRIMARY KEY, 
+        name VARCHAR(255),
+        symbol VARCHAR(10),
+        slug VARCHAR(255),
+        num_market_pairs INT,
+        date_added TIMESTAMP,
+        max_supply BIGINT,
+        circulating_supply BIGINT,
+        total_supply BIGINT,
+        is_active BOOLEAN,
+        last_updated TIMESTAMP,
+        quote_usd_price DECIMAL(20, 10),
+        quote_usd_volume_24h DECIMAL(30, 0),
+        quote_usd_volume_change_24h DECIMAL(20, 10),
+        quote_usd_percent_change_1h DECIMAL(20, 10),
+        quote_usd_percent_change_24h DECIMAL(20, 10),
+        quote_usd_percent_change_7d DECIMAL(20, 10),
+        quote_usd_percent_change_30d DECIMAL(20, 10),
+        quote_usd_percent_change_60d DECIMAL(20, 10),
+        quote_usd_percent_change_90d DECIMAL(20, 10),
+        quote_usd_market_cap DECIMAL(20, 0),
+        quote_usd_market_cap_dominance DECIMAL(20, 10),
+        quote_usd_fully_diluted_market_cap DECIMAL(20, 0),
+        quote_usd_last_updated TIMESTAMP
+    );
+    """,
+    dag=crypto_dag
+)
+
 load_task = PythonOperator(
     task_id='load_data_task',
     python_callable=load,
     dag=crypto_dag
 )
 
-extract_task >> transform_task >> load_task
+email_task = EmailOperator(
+    task_id='email_task',
+    to=['chideraozigbo@gmail.com', 'femi.eddy@gmail.com'],
+    subject='Crypto Data CSV',
+    html_content="""
+    <p>Hello Team,</p>
+    <p>I trust you are doing great today.</p>
+    <p>Find attached in this email is the latest Crypto Data that was loaded into our Database from our crypto pipeline.</p>
+    <p>Best Wishes.</p>
+    """,
+    files=['/home/ubuntu/Crypto_Data.csv'],
+    dag=crypto_dag
+)
+
+
+extract_task >> transform_task >> create_table_task >> file_sensor_task >> load_task >> email_task
