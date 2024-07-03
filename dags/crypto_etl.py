@@ -199,7 +199,7 @@ load_task = PythonOperator(
 
 email_task = EmailOperator(
     task_id='email_task',
-    to=['chideraozigbo@gmail.com', 'femi.eddy@gmail.com'],
+    to=['chideraozigbo@gmail.com'],
     subject='Crypto Data CSV',
     html_content="""
     <p>Hello Team,</p>
