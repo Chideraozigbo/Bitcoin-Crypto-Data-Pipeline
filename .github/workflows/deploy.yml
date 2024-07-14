@@ -17,4 +17,4 @@ jobs:
         run: |
           rsync -avz ./dags/ $AIRFLOW_HOME/dags/
         env:
-          AIRFLOW_HOME: /home/airflow/airflow
+          AIRFLOW_HOME: /home/ubuntu/airflow
