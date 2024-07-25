@@ -4,6 +4,10 @@
 
 This project is an ETL (Extract, Transform, Load) pipeline built using Apache Airflow. It extracts cryptocurrency data from the CoinMarketCap API(specifically for Bitcoin), transforms the data using Pandas, and loads it into a PostgreSQL database.GitHub Actions is used for automatic deployment on the Ubuntu server.
 
+## System Architecture
+
+![System Architecture](IMG_7799.GIF)
+
 ## Key Components
 
 ### 1. Data Extraction
